@@ -37,4 +37,12 @@ Both are credited in full in [METHODOLOGY.md](METHODOLOGY.md).
 
 ## Project status
 
-Phase 0 (setup) complete. See [CLAUDE.md](CLAUDE.md) for the build plan.
+Phases 0–4 complete: catalog ingest, debris density + collision model, Monte
+Carlo + pricing, and a working Streamlit app. Next up is Phase 5 (polish,
+methodology write-up, deploy). See [CLAUDE.md](CLAUDE.md) for the build plan.
+
+Run the app locally:
+
+```bash
+streamlit run src/app/streamlit_app.py
+```
