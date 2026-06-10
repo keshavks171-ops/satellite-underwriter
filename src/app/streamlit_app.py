@@ -36,10 +36,14 @@ st.set_page_config(page_title="Underwrite a Satellite", page_icon="🛰️", lay
 
 @st.cache_data(show_spinner="Fetching live debris catalog from CelesTrak…")
 def get_profile():
-    """Load the catalog (24h cached on disk) and build the density profile once."""
+    """Load the catalog (24h cached on disk) and build the density profile once.
+
+    Also reports whether the load fell back to the repo's bundled snapshot
+    (e.g. when CelesTrak rate-limits the host's IP), so the UI can flag it.
+    """
     df = catalog.load_catalog()
     profile = density.build_density_profile(df["altitude_km"])
-    return profile, len(df)
+    return profile, len(df), catalog.used_snapshot()
 
 
 @st.cache_data(show_spinner="Computing premium-vs-altitude curve…")
@@ -74,7 +78,14 @@ st.caption(
     "Built for the NASA × Hack Club Stardance Challenge."
 )
 
-profile, n_objects = get_profile()
+profile, n_objects, from_snapshot = get_profile()
+if from_snapshot:
+    st.info(
+        "ℹ️ CelesTrak wasn't reachable from this server, so this quote uses the "
+        "bundled catalog snapshot instead of a live pull. The debris environment "
+        "changes slowly, so quotes remain representative.",
+        icon="🛰️",
+    )
 
 
 # --- Sidebar: the quote form -------------------------------------------------

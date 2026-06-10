@@ -24,6 +24,15 @@ Monte Carlo loss distribution → premium.
   group per day (it rate-limits aggressive clients). We merge the five groups
   and dedupe by NORAD catalog number.
 
+  **Snapshot fallback:** the repo also bundles a slim snapshot of the catalog
+  (`data/snapshot/`, ~2 MB — only the five GP fields the model uses). If
+  CelesTrak is unreachable at runtime (it rate-limits some cloud-host IP
+  ranges, including Streamlit Community Cloud's), the engine falls back to the
+  snapshot instead of failing, and the app banners that the data isn't a live
+  pull. The debris environment changes slowly, so a snapshot a few months old
+  still gives representative quotes. Regenerate with
+  `python scripts/make_snapshot.py` after a fresh local pull.
+
   **Live catalog size (snapshot 2026-06-09):** 18,242 unique objects —
   active 15,626, fengyun-1c-debris 1,914, cosmos-2251-debris 589,
   iridium-33-debris 110, cosmos-1408-debris 3. The Cosmos-1408 cloud (a 2021

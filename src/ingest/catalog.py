@@ -43,8 +43,18 @@ GROUPS = [
 # <repo>/src/ingest/catalog.py, so parents[2] is <repo>).
 CACHE_DIR = Path(__file__).resolve().parents[2] / "data" / "cache"
 
+# Bundled snapshot, committed to the repo (unlike the cache). Used as a
+# fallback when CelesTrak is unreachable — e.g. Streamlit Community Cloud's
+# IP ranges sometimes get rate-limited by CelesTrak.
+SNAPSHOT_DIR = Path(__file__).resolve().parents[2] / "data" / "snapshot"
+
 # Reuse a cached pull for this long before going back to the network.
 CACHE_TTL_HOURS = 24
+
+# Network retry: one extra attempt after a short pause covers transient blips
+# without hammering CelesTrak (rate-limit-friendly).
+FETCH_ATTEMPTS = 2
+RETRY_WAIT_SECONDS = 2.0
 
 # Standard gravitational parameter of Earth (G·M), km^3 / s^2.
 # Source: WGS-84 / standard astrodynamics value.
@@ -138,13 +148,24 @@ def _write_cache(group: str, objects: list) -> None:
 def _fetch_group(group: str, client: httpx.Client) -> list:
     """Fetch one group's GP catalog from CelesTrak as a list of dicts.
 
+    Retries once after a short pause on network errors (transient blips).
     CelesTrak returns a JSON array of objects on success. On an error (bad
     group name, rate limit) it sometimes returns a short string or HTML instead,
     so we guard against that.
     """
     params = {"GROUP": group, "FORMAT": "json"}
-    resp = client.get(BASE_URL, params=params)
-    resp.raise_for_status()
+    last_error = None
+    for attempt in range(FETCH_ATTEMPTS):
+        try:
+            resp = client.get(BASE_URL, params=params)
+            resp.raise_for_status()
+            break
+        except httpx.HTTPError as exc:
+            last_error = exc
+            if attempt < FETCH_ATTEMPTS - 1:
+                time.sleep(RETRY_WAIT_SECONDS)
+    else:
+        raise last_error
     data = resp.json()
     if not isinstance(data, list):
         raise ValueError(
@@ -154,15 +175,41 @@ def _fetch_group(group: str, client: httpx.Client) -> list:
     return data
 
 
+def _read_snapshot(group: str):
+    """Read a group's objects from the bundled snapshot, or None if absent.
+
+    Unlike the cache, the snapshot has no TTL — it's the emergency fallback
+    when the network is unavailable, so old data beats no data.
+    """
+    path = SNAPSHOT_DIR / f"{group}.json"
+    if not path.exists():
+        return None
+    try:
+        payload = json.loads(path.read_text())
+    except (json.JSONDecodeError, OSError):
+        return None
+    return payload.get("objects")
+
+
+# Where the most recent load_catalog() got each group's data from:
+# {"group": "cache" | "network" | "snapshot"}. The app reads this to tell the
+# user when it's running on the bundled snapshot instead of live data.
+LAST_LOAD_SOURCES: dict[str, str] = {}
+
+
 def _load_all_groups(force_refresh: bool = False):
-    """Return ``[(group, objects), ...]``, from cache where fresh.
+    """Return ``[(group, objects), ...]``: fresh cache -> network -> snapshot.
 
     Only opens a network connection if at least one group needs fetching, so a
-    fully-cached second call within 24h does zero network I/O.
+    fully-cached second call within 24h does zero network I/O. If CelesTrak is
+    unreachable (e.g. it rate-limits Streamlit Cloud's IP range), we fall back
+    to the snapshot bundled in the repo rather than crash — old data beats no
+    data for a demo app, and the UI flags the staleness.
 
     We never fetch in a tight loop: each group is requested exactly once, all
     over a single shared HTTP client, to respect CelesTrak's rate limits.
     """
+    LAST_LOAD_SOURCES.clear()
     results: dict[str, list] = {}
     needs_fetch: list[str] = []
 
@@ -171,6 +218,7 @@ def _load_all_groups(force_refresh: bool = False):
             cached = _read_cache(group)
             if cached is not None:
                 results[group] = cached
+                LAST_LOAD_SOURCES[group] = "cache"
                 continue
         needs_fetch.append(group)
 
@@ -178,12 +226,26 @@ def _load_all_groups(force_refresh: bool = False):
         headers = {"User-Agent": "satellite-underwriter/0.1 (Hack Club Stardance)"}
         with httpx.Client(timeout=30.0, headers=headers) as client:
             for group in needs_fetch:
-                objects = _fetch_group(group, client)
-                _write_cache(group, objects)
-                results[group] = objects
+                try:
+                    objects = _fetch_group(group, client)
+                    _write_cache(group, objects)
+                    results[group] = objects
+                    LAST_LOAD_SOURCES[group] = "network"
+                except httpx.HTTPError:
+                    snapshot = _read_snapshot(group)
+                    if snapshot is None:
+                        raise  # no fallback available -> surface the real error
+                    results[group] = snapshot
+                    LAST_LOAD_SOURCES[group] = "snapshot"
 
     # Preserve GROUPS order (active first) for deterministic dedupe downstream.
     return [(g, results[g]) for g in GROUPS if g in results]
+
+
+def used_snapshot() -> bool:
+    """True if the most recent load fell back to the bundled snapshot for any
+    group (i.e. the data may be stale)."""
+    return "snapshot" in LAST_LOAD_SOURCES.values()
 
 
 # --- Public API --------------------------------------------------------------

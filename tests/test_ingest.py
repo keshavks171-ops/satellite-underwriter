@@ -139,6 +139,61 @@ def test_fresh_cache_is_used(tmp_path, monkeypatch):
     assert len(cached) == 2
 
 
+# --- Snapshot fallback (network down) -----------------------------------------
+
+def test_snapshot_fallback_when_network_fails(tmp_path, monkeypatch):
+    """If the fetch raises and a snapshot exists, load_catalog uses the snapshot."""
+    import httpx
+
+    cache_dir = tmp_path / "cache"
+    snap_dir = tmp_path / "snapshot"
+    cache_dir.mkdir()
+    snap_dir.mkdir()
+    monkeypatch.setattr(catalog, "CACHE_DIR", cache_dir)
+    monkeypatch.setattr(catalog, "SNAPSHOT_DIR", snap_dir)
+
+    # Bundle a snapshot for every group.
+    for g in catalog.GROUPS:
+        (snap_dir / f"{g}.json").write_text(
+            json.dumps({"group": g, "fetched_at_unix": 0, "objects": _fake_objects(g)})
+        )
+
+    def dead_network(group, client):
+        raise httpx.ConnectTimeout("simulated: CelesTrak unreachable")
+
+    monkeypatch.setattr(catalog, "_fetch_group", dead_network)
+
+    df = catalog.load_catalog()
+    assert len(df) == 2 * len(catalog.GROUPS)  # all groups served from snapshot
+    assert catalog.used_snapshot() is True
+
+
+def test_no_snapshot_reraises_network_error(tmp_path, monkeypatch):
+    """With no snapshot available, the network error must surface, not vanish."""
+    import httpx
+
+    cache_dir = tmp_path / "cache"
+    snap_dir = tmp_path / "snapshot"  # left empty: no fallback
+    cache_dir.mkdir()
+    snap_dir.mkdir()
+    monkeypatch.setattr(catalog, "CACHE_DIR", cache_dir)
+    monkeypatch.setattr(catalog, "SNAPSHOT_DIR", snap_dir)
+
+    def dead_network(group, client):
+        raise httpx.ConnectTimeout("simulated: CelesTrak unreachable")
+
+    monkeypatch.setattr(catalog, "_fetch_group", dead_network)
+
+    with pytest.raises(httpx.ConnectTimeout):
+        catalog.load_catalog()
+
+
+def test_fresh_cache_skips_snapshot(mocked_catalog):
+    """When the cache/network works, used_snapshot() reports False."""
+    catalog.load_catalog()
+    assert catalog.used_snapshot() is False
+
+
 def test_dedupe_by_norad_id(tmp_path, monkeypatch):
     """Two objects sharing a NORAD id collapse to one row."""
     monkeypatch.setattr(catalog, "CACHE_DIR", tmp_path)
