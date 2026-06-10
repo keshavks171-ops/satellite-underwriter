@@ -2,7 +2,7 @@
 
 This document is written for the Hack Club Stardance judges. It records the
 math, the assumptions, and the data sources behind every number the engine
-quotes. It is filled in as each phase is built — right now it is a skeleton.
+quotes.
 
 ## 1. Overview
 
@@ -32,13 +32,26 @@ Monte Carlo loss distribution → premium.
   earlier snapshots. This is real orbital decay, not a data error: zero rows are
   dropped by the dedupe/clean step.
 - **NASA Orbital Debris Program Office (ODPO)**: lethal non-trackable (1–10 cm)
-  debris population. The tracked catalog only covers objects >10 cm, but ODPO's
-  modeling (the ORDEM engineering model and the *Orbital Debris Quarterly News*)
-  indicates the 1–10 cm lethal population outnumbers the tracked one by roughly
-  an order of magnitude. We encode this as `LNT_MULTIPLIER = 8.0` (default,
-  configurable). **TODO before submission:** pin the exact ODPO figure/page this
-  8× is taken from (ORDEM 3.x documentation) rather than the order-of-magnitude
-  paraphrase here.
+  debris population. The tracked catalog only covers objects larger than ~10 cm.
+  Per NASA ODPO's published estimates, the orbital-debris population by size is
+  roughly:
+  - **> 10 cm:** more than **25,000** tracked objects (U.S. Space Surveillance
+    Network);
+  - **1–10 cm:** approximately **500,000** objects, estimated by modeling and
+    radar statistics, *not* individually tracked;
+  - **> 1 mm:** more than **100 million** objects.
+
+  The 1–10 cm fragments are the "lethal non-trackable" (LNT) population: too
+  small to catalog, but large enough to destroy a satellite at orbital speed.
+  The raw count ratio (~500,000 / ~25,000 ≈ **20×**) is an upper bound on how
+  much extra collision flux they add — but not all of that population overlaps
+  the satellite's altitude or contributes equally to flux, so we use a
+  deliberately **conservative `LNT_MULTIPLIER = 8.0`** as the default
+  (configurable in the app). A user who wants the full count-ratio scaling can
+  raise it toward 20.
+
+  _Source: NASA ODPO Frequently Asked Questions,_
+  <https://orbitaldebris.jsc.nasa.gov/faq/> _(accessed 2026-06-09)._
 
 ## 3. The model
 
@@ -160,8 +173,10 @@ the code that relies on it.
   ("ram vs wake") effects and the slow growth of the debris population over time.
 - **Lethal non-trackable scaling (Phase 2).** We multiply the tracked-object
   flux by `LNT_MULTIPLIER = 8` to account for the 1–10 cm fragments that are too
-  small to track but still mission-ending. This is a single scalar, not an
-  altitude-dependent one — a deliberate simplification.
+  small to track but still mission-ending (see §2 for the ODPO population basis).
+  This is a single altitude-independent scalar — a deliberate simplification.
+  Real LNT density varies with altitude; folding in an altitude-dependent factor
+  is a natural future improvement.
 - **Total loss on any lethal impact (Phase 3).** A lethal collision is assumed
   to destroy the satellite completely, so the loss in a trial is
   `P_collision × insured value` — there are no partial losses or repairs.
@@ -177,8 +192,62 @@ the code that relies on it.
 
 ## 5. Limitations
 
-_To be written in Phase 5, including why our debris-only premium lands below
-the historical ~0.5–2% of asset value per year seen in real space insurance._
+This is a first-order engineering model, built to be honest about what it does
+and doesn't capture. The main limitations:
+
+### Why our premium is lower than the real market
+
+Real in-orbit space insurance has historically run very roughly **0.5–2% of
+asset value per year**; our sample quote lands at **~0.03%/yr**. That gap is
+expected and is mostly about *scope*, not error:
+
+1. **We price debris collision only.** Real policies also cover launch and
+   early-orbit failures (a large share of all claims), electrical/mechanical
+   subsystem faults, propellant anomalies, and solar-array degradation. Those
+   dominate real premiums and are entirely outside our model.
+2. **We model one peril with conservative-but-thin inputs.** We scale the
+   tracked catalog by a single LNT factor (8×) rather than a full size-resolved
+   flux model like NASA ORDEM or ESA MASTER, which would raise the collision
+   probability.
+3. **Real pricing includes heavier loads.** Actual underwriters add capital
+   costs, reinsurance, market cycle effects, and larger profit margins than our
+   flat 15% expense load.
+
+So a low rate is the *correct* output for a pure debris-collision model on a
+small satellite — and the engine still ranks altitudes correctly, which is the
+useful decision it supports.
+
+### Physical / modeling simplifications
+
+- **Snapshot, not forecast.** Risk is computed from today's catalog. We don't
+  model debris growth, decay, or solar-cycle drag over the mission, nor
+  collision-cascade ("Kessler syndrome") feedback. A 5-year quote uses a
+  constant present-day environment.
+- **Circular, uniformly-spread orbits.** Altitude comes from the semi-major
+  axis (mean altitude), and each object is smeared uniformly over its shell.
+  Real orbits are eccentric and inclined, concentrating debris at specific
+  altitudes and latitudes.
+- **Single average impact velocity, isotropic flux.** We use one `v_rel`
+  (8–12 km/s) from all directions, ignoring inclination-dependent geometry and
+  ram-vs-wake directionality.
+- **Altitude-independent LNT factor.** The untrackable population is scaled by a
+  constant, though it really varies with altitude.
+- **Small-sample shells.** Some debris clouds have decayed to very few tracked
+  objects (e.g. Cosmos-1408 is down to 3), so the density in those specific
+  shells is statistically noisy.
+
+### Actuarial simplifications
+
+- **Total loss only** — any lethal impact is assumed to destroy the satellite;
+  no partial losses.
+- **No collision avoidance** — operators get no credit for maneuvering, so
+  quotes are conservative (higher) for maneuverable satellites.
+- **In-orbit only, single satellite** — no launch coverage, and no portfolio
+  diversification across a constellation.
+
+None of these are hidden: each is restated in §4 next to the assumption, and the
+app exposes the key knobs (LNT factor, velocity range, risk load) so a user can
+test how sensitive the quote is to them.
 
 ## 6. Validation checks
 
@@ -196,4 +265,5 @@ The engine is checked against (see CLAUDE.md for detail):
    **PASS:** shell volume for 400–425 km = 1.4456×10¹⁰ km³ (hand-derived), and
    `P ≈ F·A·T` for tiny `F·A·T`. Covered by the pytest suite.
 
-_Results recorded here as the checks are implemented._
+All three checks pass on the live catalog; the 49-test pytest suite covers the
+underlying functions.

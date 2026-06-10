@@ -1,0 +1,8 @@
+# Streamlit theme + server config for Underwrite a Satellite.
+[theme]
+primaryColor = "#1f77b4"
+base = "light"
+
+[server]
+# Keep the app responsive on Streamlit Community Cloud's small instances.
+headless = true

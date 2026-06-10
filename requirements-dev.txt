@@ -1,0 +1,4 @@
+# Dev-only extras (not needed to run or deploy the app).
+-r requirements.txt
+
+matplotlib>=3.8   # scripts/make_figures.py — generates the README chart images
