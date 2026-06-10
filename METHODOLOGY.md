@@ -32,14 +32,67 @@ Monte Carlo loss distribution → premium.
   earlier snapshots. This is real orbital decay, not a data error: zero rows are
   dropped by the dedupe/clean step.
 - **NASA Orbital Debris Program Office (ODPO)**: lethal non-trackable (1–10 cm)
-  debris population. Encoded as `LNT_MULTIPLIER = 8.0` (default). _Exact
-  citation to be added in Phase 2._
+  debris population. The tracked catalog only covers objects >10 cm, but ODPO's
+  modeling (the ORDEM engineering model and the *Orbital Debris Quarterly News*)
+  indicates the 1–10 cm lethal population outnumbers the tracked one by roughly
+  an order of magnitude. We encode this as `LNT_MULTIPLIER = 8.0` (default,
+  configurable). **TODO before submission:** pin the exact ODPO figure/page this
+  8× is taken from (ORDEM 3.x documentation) rather than the order-of-magnitude
+  paraphrase here.
 
 ## 3. The model
 
-_Filled in across Phases 2–3. Will cover: mean-altitude derivation, 25 km
-shells and shell volumes, spatial density, debris flux, the Poisson collision
-model, the Monte Carlo uncertainty simulation, and the premium formula._
+### Step 1 — Mean altitude (Phase 1)
+
+Derived from each object's mean motion via Kepler's third law (see the
+circular-orbit assumption in §4).
+
+### Step 2 — Spatial density by altitude (Phase 2)
+
+We bin every object into 25 km altitude shells from 200–2000 km and compute a
+*density* (objects per km³), not a raw count, because higher shells enclose more
+volume and would otherwise look artificially crowded:
+
+```
+shell_volume = (4/3)π [ (R + h₂)³ − (R + h₁)³ ]     # R = 6371 km, km³
+density(h)   = count_in_shell / shell_volume         # objects / km³
+```
+
+**Why density and not count:** collision risk depends on how *packed* the space
+around the satellite is, which is objects per unit volume — dividing out the
+shell volume is what makes shells at different altitudes comparable.
+
+### Step 3 — Debris flux (Phase 2)
+
+```
+F(h) = density(h) · v_rel · LNT_MULTIPLIER            # impacts / (km² · s)
+```
+
+`v_rel` is the average relative impact velocity in LEO (default 10 km/s,
+configurable 8–12). `density · v_rel` is the number of objects sweeping through a
+1 km² window per second; `LNT_MULTIPLIER` (default 8) scales the tracked
+population up to include the 1–10 cm lethal-but-untrackable fragments.
+
+### Step 4 — Collision probability, Poisson model (Phase 2)
+
+```
+expected_hits = F · A · T
+P_collision   = 1 − exp(−expected_hits)
+```
+
+Collisions are rare, independent events at a steady average rate — the textbook
+Poisson setup. `F · A · T` is the *expected number* of lethal hits over the
+mission; the Poisson chance of zero hits is `exp(−F·A·T)`, so the chance of at
+least one is one minus that. **Critical unit conversions:** the cross-section `A`
+is entered in m² and converted to km² (×1e-6), and the duration `T` is entered
+in years and converted to seconds (×365.25·24·3600), so that `F·A·T` is
+dimensionless. The code computes `1 − exp(−x)` as `-expm1(-x)` for numerical
+accuracy at small `x`.
+
+### Steps 5–6 — Monte Carlo + pricing
+
+_Added in Phase 3: a 10,000-trial uncertainty simulation and the premium
+formula._
 
 ## 4. Assumptions (running list)
 
@@ -55,10 +108,22 @@ the code that relies on it.
   approximation for a debris-density model. A handful of highly eccentric or
   deep-space objects get large/odd altitudes and simply fall outside the
   200–2000 km LEO shells the model bins (Phase 2), so they don't distort it.
-- _More added as the model is built:_ each object spends its whole life
-  uniformly spread over its mean-altitude shell; total loss on any lethal
-  impact; no collision-avoidance maneuvers; in-orbit coverage only (no launch
-  risk); single-satellite policy.
+- **Uniform spread within a shell (Phase 2).** Each object is treated as if it
+  spends its whole life uniformly distributed over its mean-altitude shell, so
+  the shell's density applies equally everywhere inside it. Real orbits are
+  inclined and eccentric, concentrating objects at certain latitudes; uniform
+  spreading is the standard first-order density model.
+- **Isotropic, steady flux (Phase 2).** Debris is assumed to approach from all
+  directions at a single average relative velocity `v_rel` (default 10 km/s),
+  and the flux is constant over the mission. This ignores directional
+  ("ram vs wake") effects and the slow growth of the debris population over time.
+- **Lethal non-trackable scaling (Phase 2).** We multiply the tracked-object
+  flux by `LNT_MULTIPLIER = 8` to account for the 1–10 cm fragments that are too
+  small to track but still mission-ending. This is a single scalar, not an
+  altitude-dependent one — a deliberate simplification.
+- _More added in Phase 3:_ total loss on any lethal impact; no
+  collision-avoidance maneuvers; in-orbit coverage only (no launch risk);
+  single-satellite policy.
 
 ## 5. Limitations
 
@@ -69,8 +134,16 @@ the historical ~0.5–2% of asset value per year seen in real space insurance._
 
 The engine is checked against (see CLAUDE.md for detail):
 
-1. Density-curve shape (peaks near ~550, ~800–1000, ~1400–1500 km).
-2. Order-of-magnitude collision probability for a reference satellite.
-3. Hand-computed unit tests (shell volume, small-argument Poisson).
+1. **Density-curve shape** (peaks near ~550, ~800–1000, ~1400–1500 km).
+   **PASS (2026-06-09):** the live catalog peaks at **~538 km** (Starlink),
+   **~788 km** (sun-sync + the 2009 Iridium-33/Cosmos-2251 collision debris at
+   ~790 km), and **~1512 km** — the curve is clearly structured, confirming the
+   altitude math.
+2. **Order-of-magnitude collision probability** for a reference satellite.
+   **PASS:** a 1 m², 5-year mission at 800 km gives **P ≈ 2.3×10⁻⁴**, inside the
+   expected 10⁻⁵–10⁻³ band — confirming the m²→km² and years→seconds conversions.
+3. **Hand-computed unit tests** (shell volume, small-argument Poisson).
+   **PASS:** shell volume for 400–425 km = 1.4456×10¹⁰ km³ (hand-derived), and
+   `P ≈ F·A·T` for tiny `F·A·T`. Covered by the pytest suite.
 
 _Results recorded here as the checks are implemented._
