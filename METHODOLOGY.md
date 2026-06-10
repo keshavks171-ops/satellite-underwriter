@@ -89,10 +89,51 @@ in years and converted to seconds (×365.25·24·3600), so that `F·A·T` is
 dimensionless. The code computes `1 − exp(−x)` as `-expm1(-x)` for numerical
 accuracy at small `x`.
 
-### Steps 5–6 — Monte Carlo + pricing
+### Step 5 — Monte Carlo uncertainty (Phase 3)
 
-_Added in Phase 3: a 10,000-trial uncertainty simulation and the premium
-formula._
+We don't know the debris density, impact velocity, or exact cross-section
+precisely, so we run the collision model 10,000 times, each trial drawing those
+inputs from plausible ranges:
+
+```
+density scale  ~ lognormal(median 1, σ = 0.30)   # ±~30% on debris density
+v_rel          ~ uniform(8, 12) km/s             # impact velocity
+area           ~ uniform(±10%) of the nominal area
+```
+
+Each trial yields a collision probability and a loss (`P × insured value`),
+giving a *loss distribution* rather than a single point estimate. We report its
+mean, standard deviation, and the 95th/99th percentiles. The P95/P99 are
+**Value-at-Risk (VaR)-style tail metrics**: "with 95% / 99% confidence, the loss
+won't exceed this" — standard risk-management language.
+
+A lognormal is used for the density scale (not a normal) because density can't
+go negative and uncertainty is naturally multiplicative — being "off by 30%" is
+more realistic than "off by 30 objects/km³."
+
+### Step 6 — Premium pricing (Phase 3)
+
+```
+expected_loss = mean(loss_distribution)            # pure premium
+risk_load     = k · std(loss_distribution)         # k = 0.25
+expense_load  = 15% · (expected_loss + risk_load)
+premium       = expected_loss + risk_load + expense_load
+annual_rate   = premium / value / T_years
+```
+
+- **expected_loss** — average payout; charging only this would ruin the insurer
+  half the time.
+- **risk_load** — extra charge for *uncertainty* (the standard-deviation
+  principle): a wide loss distribution is more dangerous than a predictable one
+  with the same mean, so we add `k` standard deviations.
+- **expense_load** — flat 15% for the insurer's admin, capital, and profit.
+- **annual_rate** — premium as a yearly % of insured value, how space insurance
+  is actually quoted.
+
+**Worked sample quote (550 km, 2 m², 5 yr, $10M, snapshot 2026-06-09):**
+density 4.43×10⁻⁸ obj/km³ → mean collision probability 1.17×10⁻³ →
+expected loss $11,683, risk load $987, expense $1,900 → **premium $14,570**,
+**annual rate 0.029%** of value/year. (P95 loss $19,076, P99 $23,958.)
 
 ## 4. Assumptions (running list)
 
@@ -121,9 +162,18 @@ the code that relies on it.
   flux by `LNT_MULTIPLIER = 8` to account for the 1–10 cm fragments that are too
   small to track but still mission-ending. This is a single scalar, not an
   altitude-dependent one — a deliberate simplification.
-- _More added in Phase 3:_ total loss on any lethal impact; no
-  collision-avoidance maneuvers; in-orbit coverage only (no launch risk);
-  single-satellite policy.
+- **Total loss on any lethal impact (Phase 3).** A lethal collision is assumed
+  to destroy the satellite completely, so the loss in a trial is
+  `P_collision × insured value` — there are no partial losses or repairs.
+- **No collision-avoidance maneuvers (Phase 3).** We don't credit operators for
+  dodging tracked debris, so the quoted risk is conservative (higher) versus a
+  maneuverable satellite.
+- **In-orbit coverage only (Phase 3).** Launch and early-orbit failures — a
+  large share of real space-insurance claims — are out of scope; this is purely
+  an on-orbit debris-collision policy.
+- **Single-satellite policy (Phase 3).** Each quote prices one satellite
+  independently, with no portfolio diversification across a constellation (a
+  stretch goal).
 
 ## 5. Limitations
 
