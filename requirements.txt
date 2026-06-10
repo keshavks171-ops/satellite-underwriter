@@ -1,0 +1,14 @@
+# Underwrite a Satellite — dependencies
+# Pinned to recent stable majors; loosen later if a host needs it.
+
+# Data fetching + wrangling
+httpx>=0.27          # CelesTrak catalog HTTP fetches
+pandas>=2.2          # catalog DataFrame
+numpy>=1.26          # orbital math + Monte Carlo
+
+# UI
+streamlit>=1.36      # the quote app (pure-Python UI)
+plotly>=5.22         # density / loss-distribution / premium charts
+
+# Tests
+pytest>=8.0          # run after every phase

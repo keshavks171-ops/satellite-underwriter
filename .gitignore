@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# Virtual environment
+.venv/
+venv/
+
+# Cached CelesTrak catalog pulls — never commit, regenerated at runtime
+data/cache/*
+!data/cache/.gitkeep
+
+# Notebook checkpoints
+.ipynb_checkpoints/
+
+# OS / editor cruft
+.DS_Store
+.vscode/
+.idea/
